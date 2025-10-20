@@ -219,6 +219,9 @@ const DEMO_RESUMO_TEXT = `
 function getByPath(obj, path){ if(!path) return undefined; return path.split('.').reduce((a,k)=> (a && (k in a)) ? a[k] : undefined, obj); }
 function uid(){ return 'id'+Math.random().toString(36).slice(2,9); }
 function parsePtBrCurrency(str){ if(typeof str!=='string') return NaN; const cleaned=str.replace(/[^0-9,\.]/g,'').replace(/\./g,'').replace(',', '.'); const val=parseFloat(cleaned); return Number.isFinite(val)?val:NaN; }
+function formatDateInput(date){ const y=date.getFullYear(); const m=String(date.getMonth()+1).padStart(2,'0'); const d=String(date.getDate()).padStart(2,'0'); return `${y}-${m}-${d}`; }
+function currentMonthRange(){ const now=new Date(); const start=new Date(now.getFullYear(), now.getMonth(), 1); const end=new Date(now.getFullYear(), now.getMonth()+1, 0); return {start:formatDateInput(start), end:formatDateInput(end)}; }
+function formDataToObject(fd){ const obj={}; if(!fd) return obj; for(const [k,v] of fd.entries()){ const value=(v instanceof File)?{name:v.name,size:v.size,type:v.type,lastModified:v.lastModified}:v; if(obj[k]!==undefined){ if(Array.isArray(obj[k])) obj[k].push(value); else obj[k]=[obj[k], value]; }else{ obj[k]=value; } } return obj; }
 function parseResumoSummary(input){
   const result={labels:[], values:[], total:null, updatedAt:null, companies:[]};
   if(typeof input!=='string') return result;
@@ -419,7 +422,7 @@ async function fetchAndApply(panel, cfg, applyFn, formDataOverride){
     let data=null, text=null, blob=null;
     if(ct.includes('application/json')) data=await res.json(); else if(ct.startsWith('text/')) text=await res.text(); else blob=await res.blob();
     if(!res.ok) toast(`Webhook returned ${res.status}`,'warning'); else toast('Webhook succeeded.','success');
-    applyFn(data,text,blob,ct);
+    applyFn(data,text,blob,ct, formDataOverride||null);
   }catch(err){
     toast('Network/CORS error calling webhook.','danger');
     statusSetter('Error (see console / CORS)'); console.error(err);
@@ -432,6 +435,7 @@ async function fetchAndApply(panel, cfg, applyFn, formDataOverride){
 
 /* ========== Data widgets ========== */
 function renderDataWidget(panel, cfg){
+  if(panel._payloadHandler){ window.removeEventListener('nd:payload', panel._payloadHandler); panel._payloadHandler=null; }
   const content = panel.querySelector('.content');
   const v = cfg.dataSpec||{};
   content.innerHTML = `
@@ -456,42 +460,64 @@ function renderDataWidget(panel, cfg){
     `;
   }
 
+  const applyData = (data,{source='fetch'}={})=>{
+    const mode = cfg.dataSpec?.mode||'kpi';
+    const viaForm = source==='broadcast';
+    if(mode==='list'){
+      const listPath = cfg.dataSpec.listPath||'items';
+      const labelPath = cfg.dataSpec.itemLabelPath||'title';
+      const urlPath   = cfg.dataSpec.itemUrlPath||'url';
+      const listData = getByPath(data, listPath);
+      if(viaForm && typeof listData==='undefined') return;
+      const arr = Array.isArray(listData) ? listData : [];
+      const rows = arr.map(it=>`<tr><td><a href="${esc(getByPath(it,urlPath)||'#')}" target="_blank">${esc(getByPath(it,labelPath)||'Item')}</a></td></tr>`).join('');
+      const tbody = $(`#tbody-${cfg.id}`);
+      if(tbody) tbody.innerHTML = rows || `<tr><td class="text-secondary small">No items returned.</td></tr>`;
+      setStatus(panel, `Loaded ${arr.length} items${viaForm?' • via formulário':''}.`);
+    }else{
+      const v1Raw = getByPath(data, cfg.dataSpec.value1Path||'value1');
+      const v2Raw = getByPath(data, cfg.dataSpec.value2Path||'value2');
+      const v3Raw = getByPath(data, cfg.dataSpec.value3UrlPath||'value3Url');
+      if(viaForm && v1Raw===undefined && v2Raw===undefined && v3Raw===undefined) return;
+      const v1 = (v1Raw!=null)?v1Raw:'—';
+      const v2 = (v2Raw!=null)?v2Raw:'';
+      const v3 = v3Raw;
+      const v1El = $(`#v1-${cfg.id}`), v2El = $(`#v2-${cfg.id}`);
+      v1El.textContent = v1;
+      v2El.textContent = v2;
+      v2El.classList.toggle('down', (String(v2||'').trim().startsWith('-')));
+      if(v3){
+        if(!v1El.parentNode.querySelector('a.link-v1')){
+          const a=document.createElement('a'); a.className='link-v1'; a.style.textDecoration='none'; a.style.color='inherit'; v1El.replaceWith(a); a.appendChild(v1El);
+        }
+        v1El.parentNode.setAttribute('href', v3);
+        v1El.parentNode.setAttribute('target','_blank');
+      }
+      setStatus(panel, `OK${viaForm?' • via formulário':''}`.trim());
+    }
+  };
+
   // Header refresh button
   $('.btn-refresh', panel).addEventListener('click', async (e)=>{
     e.preventDefault();
-    await fetchAndApply(panel, cfg, (data)=>{
-      if((cfg.dataSpec?.mode||'kpi')==='list'){
-        const listPath = cfg.dataSpec.listPath||'items';
-        const labelPath = cfg.dataSpec.itemLabelPath||'title';
-        const urlPath   = cfg.dataSpec.itemUrlPath||'url';
-        const arr = Array.isArray(getByPath(data, listPath)) ? getByPath(data,listPath) : [];
-        const rows = arr.map(it=>`<tr><td><a href="${esc(getByPath(it,urlPath)||'#')}" target="_blank">${esc(getByPath(it,labelPath)||'Item')}</a></td></tr>`).join('');
-        $(`#tbody-${cfg.id}`).innerHTML = rows || `<tr><td class="text-secondary small">No items returned.</td></tr>`;
-        setStatus(panel, `Loaded ${arr.length} items.`);
-      }else{
-        const v1 = getByPath(data, cfg.dataSpec.value1Path||'value1');
-        const v2 = getByPath(data, cfg.dataSpec.value2Path||'value2');
-        const v3 = getByPath(data, cfg.dataSpec.value3UrlPath||'value3Url');
-        const v1El = $(`#v1-${cfg.id}`), v2El = $(`#v2-${cfg.id}`);
-        v1El.textContent = (v1!=null) ? v1 : '—';
-        v2El.textContent = (v2!=null) ? v2 : '';
-        v2El.classList.toggle('down', (String(v2||'').trim().startsWith('-')));
-        if(v3){
-          if(!v1El.parentNode.querySelector('a.link-v1')){
-            const a=document.createElement('a'); a.className='link-v1'; a.style.textDecoration='none'; a.style.color='inherit'; v1El.replaceWith(a); a.appendChild(v1El);
-          }
-          v1El.parentNode.setAttribute('href', v3); v1El.parentNode.setAttribute('target','_blank');
-        }
-        setStatus(panel, 'OK');
-      }
-    });
+    await fetchAndApply(panel, cfg, (data)=>{ applyData(data,{source:'fetch'}); });
   });
+
+  const payloadHandler = (evt)=>{
+    const detail = evt.detail||{};
+    if(!detail || detail.sourcePanelId===cfg.id) return;
+    if(detail.data==null) return;
+    applyData(detail.data,{source:'broadcast'});
+  };
+  window.addEventListener('nd:payload', payloadHandler);
+  panel._payloadHandler = payloadHandler;
 
   attachConfig(panel, cfg, 'data');
 }
 
 /* ========== Chart widgets ========== */
 function renderChartWidget(panel, cfg){
+  if(panel._payloadHandler){ window.removeEventListener('nd:payload', panel._payloadHandler); panel._payloadHandler=null; }
   const content = panel.querySelector('.content');
   const canvasId = `c-${cfg.id}`;
   const metaId = `meta-${cfg.id}`;
@@ -507,7 +533,7 @@ function renderChartWidget(panel, cfg){
   const metaEl = $(`#${metaId}`);
   let chart=null;
 
-  function renderResumoChart(parsed, {isDemo=false}={}){
+  function renderResumoChart(parsed, {isDemo=false, sourceLabel=''}={}){
     if(metaEl){ metaEl.classList.add('d-none'); metaEl.textContent=''; }
     if(chart){ chart.destroy(); chart=null; }
     if(!window.Chart || !ctx){
@@ -563,6 +589,7 @@ function renderChartWidget(panel, cfg){
     });
     const statusBits=[];
     if(isDemo) statusBits.push('Prévia demo');
+    if(sourceLabel) statusBits.push(sourceLabel);
     if(parsed.updatedAt) statusBits.push(`Atualizado ${parsed.updatedAt}`);
     if(parsed.total!=null) statusBits.push(`Total ${currencyFmt.format(parsed.total)}`);
     statusBits.push(`${parsed.labels.length} datas`);
@@ -590,46 +617,71 @@ function renderChartWidget(panel, cfg){
     }
   }
 
-  async function run(){
-    await fetchAndApply(panel, cfg, (data)=>{
-      if(!window.Chart || !ctx) return;
-      const style = (cfg.chartSpec?.style||'line');
-      if(metaEl){ metaEl.classList.add('d-none'); metaEl.textContent=''; }
-      if(chart){ chart.destroy(); chart=null; }
-      if(style==='line'){
-        const labels = getByPath(data, cfg.chartSpec.labelsPath||'xLabels') || Array.from({length:30},(_,i)=>i+1);
-        const dsData = getByPath(data, cfg.chartSpec.dataPath||'series[0].data') || Array.from({length:30},()=>Math.round(7000+Math.random()*2000));
-        const labelName = cfg.chartSpec.datasetLabel || (getByPath(data,'series[0].label')||'Series');
-        chart = new Chart(ctx,{type:'line',data:{labels,datasets:[{label:labelName,data:dsData,tension:.35,fill:false,borderWidth:2}]},
-          options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'}},y:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'},suggestedMax: getByPath(data, cfg.chartSpec.yMaxPath||'yMax')||undefined}}}});
-        setStatus(panel, `Line: ${labels.length} points`);
-      }else if(style==='resumo'){
-        const resumoPath = cfg.chartSpec?.resumoPath || '0.resumo';
-        let resumoText = resumoPath ? getByPath(data, resumoPath) : null;
-        if(typeof resumoText !== 'string'){
-          if(Array.isArray(data)){
-            const firstWithResumo = data.find(item=> item && typeof item.resumo==='string');
-            resumoText = firstWithResumo ? firstWithResumo.resumo : resumoText;
-          }else if(data && typeof data.resumo==='string'){
-            resumoText = data.resumo;
-          }
+  const updateFromData = (data,{source='fetch'}={})=>{
+    if(!window.Chart || !ctx) return;
+    const style = (cfg.chartSpec?.style||'line');
+    const viaForm = source==='broadcast';
+    if(metaEl){ metaEl.classList.add('d-none'); metaEl.textContent=''; }
+    if(chart){ chart.destroy(); chart=null; }
+    if(style==='line'){
+      const labelsPath = cfg.chartSpec.labelsPath||'xLabels';
+      const dataPath = cfg.chartSpec.dataPath||'series[0].data';
+      const rawLabels = getByPath(data, labelsPath);
+      const rawData = getByPath(data, dataPath);
+      const hasData = Array.isArray(rawLabels) && Array.isArray(rawData);
+      if(viaForm && !hasData) return;
+      const labels = hasData ? rawLabels : (Array.isArray(rawLabels)?rawLabels:Array.from({length:30},(_,i)=>i+1));
+      const dsData = hasData ? rawData : (Array.isArray(rawData)?rawData:Array.from({length:30},()=>Math.round(7000+Math.random()*2000)));
+      const labelName = cfg.chartSpec.datasetLabel || (getByPath(data,'series[0].label')||'Series');
+      chart = new Chart(ctx,{type:'line',data:{labels,datasets:[{label:labelName,data:dsData,tension:.35,fill:false,borderWidth:2}]},
+        options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'}},y:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'},suggestedMax: getByPath(data, cfg.chartSpec.yMaxPath||'yMax')||undefined}}}});
+      setStatus(panel, `Line: ${labels.length} pontos${viaForm?' • via formulário':''}`);
+    }else if(style==='resumo'){
+      const resumoPath = cfg.chartSpec?.resumoPath || '0.resumo';
+      let resumoText = resumoPath ? getByPath(data, resumoPath) : null;
+      if(typeof resumoText !== 'string'){
+        if(Array.isArray(data)){
+          const firstWithResumo = data.find(item=> item && typeof item.resumo==='string');
+          resumoText = firstWithResumo ? firstWithResumo.resumo : resumoText;
+        }else if(data && typeof data.resumo==='string'){
+          resumoText = data.resumo;
         }
-        const parsed = parseResumoSummary(resumoText);
-        renderResumoChart(parsed);
-      }else if(style==='bar'){
-        const labels = getByPath(data, cfg.chartSpec.labelsPath||'labels') || ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-        const dsData = getByPath(data, cfg.chartSpec.dataPath||'data') || [530,610,580,740,890,660,720];
-        const labelName = cfg.chartSpec.datasetLabel || (getByPath(data,'series[0].label')||'Visits');
-        chart = new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:labelName,data:dsData}]},
-          options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'}},y:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'},suggestedMax: getByPath(data, cfg.chartSpec.yMaxPath||'yMax')||undefined}}}});
-        setStatus(panel, `Bar: ${labels.length} bars`);
-      }else{ // pie
-        const labels = getByPath(data, cfg.chartSpec.labelsPath||'labels') || ['A','B','C'];
-        const values = getByPath(data, cfg.chartSpec.dataPath||'values') || [30,40,30];
-        chart = new Chart(ctx,{type:'pie',data:{labels,datasets:[{data:values}]},options:{responsive:true,maintainAspectRatio:false}});
-        setStatus(panel, `Pie: ${labels.length} slices`);
       }
-    });
+      const parsed = parseResumoSummary(resumoText);
+      if(parsed.labels.length){
+        renderResumoChart(parsed, {sourceLabel: viaForm ? 'via formulário' : ''});
+      }else{
+        setStatus(panel, viaForm ? 'Payload recebido sem resumo.' : 'Resumo não encontrado');
+      }
+    }else if(style==='bar'){
+      const labelsPath = cfg.chartSpec.labelsPath||'labels';
+      const dataPath = cfg.chartSpec.dataPath||'data';
+      const rawLabels = getByPath(data, labelsPath);
+      const rawData = getByPath(data, dataPath);
+      const hasData = Array.isArray(rawLabels) && Array.isArray(rawData);
+      if(viaForm && !hasData) return;
+      const labels = hasData ? rawLabels : (Array.isArray(rawLabels)?rawLabels:['Mon','Tue','Wed','Thu','Fri','Sat','Sun']);
+      const dsData = hasData ? rawData : (Array.isArray(rawData)?rawData:[530,610,580,740,890,660,720]);
+      const labelName = cfg.chartSpec.datasetLabel || (getByPath(data,'series[0].label')||'Visits');
+      chart = new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:labelName,data:dsData}]},
+        options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'}},y:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'},suggestedMax: getByPath(data, cfg.chartSpec.yMaxPath||'yMax')||undefined}}}});
+      setStatus(panel, `Bar: ${labels.length} barras${viaForm?' • via formulário':''}`);
+    }else{ // pie
+      const labelsPath = cfg.chartSpec.labelsPath||'labels';
+      const dataPath = cfg.chartSpec.dataPath||'values';
+      const rawLabels = getByPath(data, labelsPath);
+      const rawData = getByPath(data, dataPath);
+      const hasData = Array.isArray(rawLabels) && Array.isArray(rawData);
+      if(viaForm && !hasData) return;
+      const labels = hasData ? rawLabels : (Array.isArray(rawLabels)?rawLabels:['A','B','C']);
+      const values = hasData ? rawData : (Array.isArray(rawData)?rawData:[30,40,30]);
+      chart = new Chart(ctx,{type:'pie',data:{labels,datasets:[{data:values}]},options:{responsive:true,maintainAspectRatio:false}});
+      setStatus(panel, `Pie: ${labels.length} fatias${viaForm?' • via formulário':''}`);
+    }
+  };
+
+  async function run(){
+    await fetchAndApply(panel, cfg, (data)=>{ updateFromData(data,{source:'fetch'}); });
   }
 
   if((cfg.chartSpec?.style||'line')==='resumo'){
@@ -643,17 +695,57 @@ function renderChartWidget(panel, cfg){
   }
   $('.btn-refresh', panel).addEventListener('click', (e)=>{ e.preventDefault(); run(); });
 
+  const payloadHandler = (evt)=>{
+    const detail = evt.detail||{};
+    if(!detail || detail.sourcePanelId===cfg.id) return;
+    if(detail.data==null) return;
+    updateFromData(detail.data,{source:'broadcast'});
+  };
+  window.addEventListener('nd:payload', payloadHandler);
+  panel._payloadHandler = payloadHandler;
+
   attachConfig(panel, cfg, 'chart');
 }
 
 /* ========== Custom (App) widgets ========== */
+function ensureWebhookDateFields(cfg){
+  if(!cfg || cfg.id!=='app-webhook') return;
+  cfg.customSpec = cfg.customSpec || {responseOnly:false, fields:[]};
+  const monthRange = currentMonthRange();
+  let fields = Array.isArray(cfg.customSpec.fields) ? cfg.customSpec.fields.slice() : [];
+  let startField = fields.find(f=>f && f.name==='data_inicio');
+  if(startField){
+    if(!startField.id) startField.id = uid();
+    startField.type='date';
+    startField.label = startField.label || 'Data início';
+    startField.auto = 'month-start';
+    startField.width = startField.width || 'col-md-6';
+    startField.value = monthRange.start;
+  }else{
+    startField = {id:uid(), type:'date', name:'data_inicio', label:'Data início', auto:'month-start', width:'col-md-6', value:monthRange.start};
+  }
+  let endField = fields.find(f=>f && f.name==='data_final');
+  if(endField){
+    if(!endField.id) endField.id = uid();
+    endField.type='date';
+    endField.label = endField.label || 'Data final';
+    endField.auto = 'month-end';
+    endField.width = endField.width || 'col-md-6';
+    endField.value = monthRange.end;
+  }else{
+    endField = {id:uid(), type:'date', name:'data_final', label:'Data final', auto:'month-end', width:'col-md-6', value:monthRange.end};
+  }
+  const others = fields.filter(f=> f && f.name!=='data_inicio' && f.name!=='data_final');
+  cfg.customSpec.fields = [startField, endField, ...others];
+}
 function renderCustomWidget(panel, cfg){
+  if(cfg.id==='app-webhook') ensureWebhookDateFields(cfg);
   const content = panel.querySelector('.content');
   content.innerHTML = `
     <form class="row g-2" id="frm-${cfg.id}">
       ${(cfg.customSpec?.responseOnly)?'': (cfg.customSpec?.fields||[
-        {id:uid(),type:'text',name:'topic',placeholder:'Topic (e.g., AI for SMBs)'},
-        {id:uid(),type:'select',name:'tone',options:['Professional','Friendly','Playful']}
+        {id:uid(),type:'text',name:'topic',placeholder:'Topic (e.g., AI for SMBs)',label:'Topic'},
+        {id:uid(),type:'select',name:'tone',options:['Professional','Friendly','Playful'],label:'Tone'}
       ]).map(f=>inputHtml(f)).join('')}
       <div class="${(cfg.customSpec?.responseOnly)?'col-12 d-grid':'col-md-2 d-grid'}">
         <button class="btn btn-accent btn-pill btn-run" type="submit"><i data-lucide="play"></i> <span>${esc(cfg.runLabel||'Run')}</span></button>
@@ -663,11 +755,15 @@ function renderCustomWidget(panel, cfg){
     <div class="small status d-none" id="resp-${cfg.id}"></div>
   `;
   lucide.createIcons();
+  const range = currentMonthRange();
+  $$('input[data-auto="month-start"]', panel).forEach(inp=>{ inp.value = range.start; });
+  $$('input[data-auto="month-end"]', panel).forEach(inp=>{ inp.value = range.end; });
 
   $(`#frm-${cfg.id}`, panel).addEventListener('submit', async (e)=>{
     e.preventDefault();
     const respEl = $(`#resp-${cfg.id}`, panel);
     setStatus(panel, 'Sending…');
+    const submitted = new FormData(e.target);
     await fetchAndApply(panel, cfg, (data,text,blob,ct)=>{
       // Show response below (nice message)
       const msgEl = respEl;
@@ -675,20 +771,51 @@ function renderCustomWidget(panel, cfg){
       else if(ct.startsWith('text/')) msgEl.innerHTML = `<pre class="small mb-0">${esc(text)}</pre>`;
       else { const url = URL.createObjectURL(blob); msgEl.innerHTML = `Received <b>${esc(ct||'binary')}</b> (${blob.size.toLocaleString()} bytes). <a href="${url}" download="response">Download</a>`; }
       msgEl.classList.remove('d-none'); panel.querySelector('.divider').classList.remove('d-none');
-      setStatus(panel, 'OK');
-    }, new FormData(e.target));
+      if(data!=null){
+        const detail = {
+          sourcePanelId: cfg.id,
+          data,
+          contentType: ct,
+          form: formDataToObject(submitted),
+          receivedAt: Date.now()
+        };
+        window.dispatchEvent(new CustomEvent('nd:payload', {detail}));
+      }
+      setStatus(panel, 'OK (payload recebido)');
+    }, submitted);
   });
 
   attachConfig(panel, cfg, 'custom');
 }
 function inputHtml(f){
-  const id=esc(f.id||uid()), nm=esc(f.name||'field'), ph=f.placeholder?`placeholder="${esc(f.placeholder)}"`:'';
-  if(f.type==='select') return `<div class="col-md-4"><select id="${id}" name="${nm}" class="form-select">${(f.options||[]).map(o=>`<option>${esc(o)}</option>`).join('')}</select></div>`;
-  if(f.type==='textarea') return `<div class="col-12"><textarea id="${id}" name="${nm}" rows="4" class="form-control" ${ph}></textarea></div>`;
-  if(f.type==='file') return `<div class="col-12"><input id="${id}" name="${nm}" type="file" class="form-control" /></div>`;
-  if(f.type==='checkbox') return `<div class="col-12 form-check ms-2"><input id="${id}" name="${nm}" class="form-check-input" type="checkbox"> <label class="form-check-label" for="${id}">${esc(f.label||nm)}</label></div>`;
-  if(f.type==='number') return `<div class="col-md-4"><input id="${id}" name="${nm}" type="number" class="form-control" ${ph}/></div>`;
-  return `<div class="col-md-6"><input id="${id}" name="${nm}" class="form-control" ${ph}/></div>`;
+  const id=esc(f.id||uid());
+  const nm=esc(f.name||'field');
+  const labelHtml = f.label ? `<label class="form-label small" for="${id}">${esc(f.label)}</label>` : '';
+  const ph=f.placeholder?` placeholder="${esc(f.placeholder)}"`:'';
+  const autoAttr=f.auto?` data-auto="${esc(f.auto)}"`:'';
+  const valueAttr=(f.value!=null && f.type!=='file' && f.type!=='textarea' && f.type!=='checkbox')?` value="${esc(f.value)}"`:'';
+  const widthClass = esc(f.width || ((f.type==='textarea'||f.type==='file')?'col-12':(f.type==='checkbox')?'col-12 form-check ms-2':(f.type==='number'||f.type==='date'||f.type==='select')?'col-md-4':'col-md-6'));
+  if(f.type==='select'){
+    return `<div class="${widthClass}">${labelHtml}<select id="${id}" name="${nm}" class="form-select"${autoAttr}>${(f.options||[]).map(o=>`<option>${esc(o)}</option>`).join('')}</select></div>`;
+  }
+  if(f.type==='textarea'){
+    return `<div class="${widthClass}">${labelHtml}<textarea id="${id}" name="${nm}" rows="4" class="form-control"${ph}${autoAttr}>${f.value!=null?esc(f.value):''}</textarea></div>`;
+  }
+  if(f.type==='file'){
+    return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="file" class="form-control"${autoAttr} /></div>`;
+  }
+  if(f.type==='checkbox'){
+    const checked = f.value ? ' checked' : '';
+    const lbl = f.label || nm;
+    return `<div class="${widthClass}"><input id="${id}" name="${nm}" class="form-check-input" type="checkbox"${autoAttr}${checked}> <label class="form-check-label" for="${id}">${esc(lbl)}</label></div>`;
+  }
+  if(f.type==='number'){
+    return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="number" class="form-control"${ph}${valueAttr}${autoAttr}/></div>`;
+  }
+  if(f.type==='date'){
+    return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="date" class="form-control"${valueAttr}${autoAttr}/></div>`;
+  }
+  return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" class="form-control"${ph}${valueAttr}${autoAttr}/></div>`;
 }
 
 /* ========== Config forms ========== */
@@ -887,17 +1014,30 @@ function customConfigForm(cfg){
       <div id="fieldList">
         ${(cs.fields||[]).map(f=> `
         <div class="row g-2 align-items-end mb-2" data-row="${esc(f.id)}" style="border:1px dashed var(--line);border-radius:12px;padding:8px;">
-          <div class="col-md-3"><select class="form-select form-select-sm" data-edit="type">
-            ${['text','number','textarea','checkbox','select','file'].map(t=>`<option value="${t}" ${f.type===t?'selected':''}>${t}</option>`).join('')}
-          </select></div>
-          <div class="col-md-3"><input class="form-control form-control-sm" data-edit="name" placeholder="name" value="${esc(f.name||'field')}"/></div>
-          <div class="col-md-4 ${f.type==='select'?'':'d-none'}"><input class="form-control form-control-sm" data-edit="options" placeholder="opt1, opt2" value="${esc((f.options||[]).join(', '))}"/></div>
-          <div class="col-md-2 d-flex justify-content-end"><button type="button" class="btn btn-soft btn-sm" data-act="del-field"><i data-lucide="trash"></i></button></div>
+          <div class="col-md-2">
+            <label class="form-label small">Type</label>
+            <select class="form-select form-select-sm" data-edit="type">
+              ${['text','number','date','textarea','checkbox','select','file'].map(t=>`<option value="${t}" ${f.type===t?'selected':''}>${t}</option>`).join('')}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">Name</label>
+            <input class="form-control form-control-sm" data-edit="name" placeholder="name" value="${esc(f.name||'field')}"/>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">Label</label>
+            <input class="form-control form-control-sm" data-edit="label" placeholder="Label" value="${esc(f.label||'')}"/>
+          </div>
+          <div class="col-md-3 ${f.type==='select'?'':'d-none'}">
+            <label class="form-label small">Options</label>
+            <input class="form-control form-control-sm" data-edit="options" placeholder="opt1, opt2" value="${esc((f.options||[]).join(', '))}"/>
+          </div>
+          <div class="col-md-1 d-flex justify-content-end"><button type="button" class="btn btn-soft btn-sm" data-act="del-field"><i data-lucide="trash"></i></button></div>
         </div>`).join('')}
       </div>
       <div class="d-flex gap-2">
         <select id="addType" class="form-select form-select-sm" style="width:auto">
-          <option value="text">text</option><option value="number">number</option><option value="textarea">textarea</option><option value="checkbox">checkbox</option><option value="select">select</option><option value="file">file</option>
+          <option value="text">text</option><option value="number">number</option><option value="date">date</option><option value="textarea">textarea</option><option value="checkbox">checkbox</option><option value="select">select</option><option value="file">file</option>
         </select>
         <button type="button" class="btn btn-accent btn-sm" data-act="add-field"><i data-lucide="plus"></i> Add Field</button>
       </div>
@@ -990,6 +1130,7 @@ function attachConfig(panel, cfg, kind){
           const f = cfg.customSpec.fields.find(x=>x.id===id); if(!f) return;
           if(t.matches('[data-edit="type"]')){ f.type=t.value; openOverlay(`Configure: ${cfg.title}`, customConfigForm(cfg)); bindOverlayEvents(); return; }
           if(t.matches('[data-edit="name"]')) f.name=t.value;
+          if(t.matches('[data-edit="label"]')) f.label=t.value;
           if(t.matches('[data-edit="options"]')) f.options=t.value.split(',').map(x=>x.trim()).filter(Boolean);
         }
       }
@@ -1007,7 +1148,7 @@ function attachConfig(panel, cfg, kind){
       if(act==='close'){ closeOverlay(); }
       if(act==='add-header'){ cfg.n8n.headers=cfg.n8n.headers||[]; cfg.n8n.headers.push({id:uid(),key:'',value:''}); openOverlay(`Configure: ${cfg.title}`, (kind==='data'?dataConfigForm:kind==='chart'?chartConfigForm:customConfigForm)(cfg)); bindOverlayEvents(); }
       if(act==='del-header'){ const row=b.closest('[data-hrow]'); const id=row.getAttribute('data-hrow'); cfg.n8n.headers=(cfg.n8n.headers||[]).filter(h=>h.id!==id); openOverlay(`Configure: ${cfg.title}`, (kind==='data'?dataConfigForm:kind==='chart'?chartConfigForm:customConfigForm)(cfg)); bindOverlayEvents(); }
-      if(act==='add-field'){ const type=$('#addType',pane).value; cfg.customSpec.fields=cfg.customSpec.fields||[]; cfg.customSpec.fields.push({id:uid(),type,name:`${type}_${cfg.customSpec.fields.length+1}`}); openOverlay(`Configure: ${cfg.title}`, customConfigForm(cfg)); bindOverlayEvents(); }
+      if(act==='add-field'){ const type=$('#addType',pane).value; const label=type.charAt(0).toUpperCase()+type.slice(1).replace(/[-_]/g,' '); cfg.customSpec.fields=cfg.customSpec.fields||[]; cfg.customSpec.fields.push({id:uid(),type,name:`${type}_${cfg.customSpec.fields.length+1}`,label}); openOverlay(`Configure: ${cfg.title}`, customConfigForm(cfg)); bindOverlayEvents(); }
       if(act==='del-field'){ const row=b.closest('[data-row]'); const id=row.getAttribute('data-row'); cfg.customSpec.fields=cfg.customSpec.fields.filter(f=>f.id!==id); openOverlay(`Configure: ${cfg.title}`, customConfigForm(cfg)); bindOverlayEvents(); }
     });
 
@@ -1032,6 +1173,7 @@ function initPanel(panel){
   const id = panel.dataset.id;
   const kind = panel.dataset.kind;
   const saved = store.get(id);
+  const monthRange = currentMonthRange();
 
   const defaults = {
     id, kind,
@@ -1069,17 +1211,28 @@ function initPanel(panel){
     customSpec: kind==='custom'? {
       responseOnly: false,
       fields: (id==='app-blog')?[
-        {id:uid(),type:'text',name:'topic',placeholder:'Topic (e.g., AI for SMBs)'},
-        {id:uid(),type:'select',name:'tone',options:['Professional','Friendly','Playful']}
+        {id:uid(),type:'text',name:'topic',placeholder:'Topic (e.g., AI for SMBs)',label:'Topic'},
+        {id:uid(),type:'select',name:'tone',options:['Professional','Friendly','Playful'],label:'Tone'}
+      ]:(id==='app-webhook')?[
+        {id:uid(),type:'date',name:'data_inicio',label:'Data início',auto:'month-start',width:'col-md-6',value:monthRange.start},
+        {id:uid(),type:'date',name:'data_final',label:'Data final',auto:'month-end',width:'col-md-6',value:monthRange.end},
+        {id:uid(),type:'file',name:'arquivo',label:'Arquivo'}
       ]:[
-        {id:uid(),type:'text',name:'prompt',placeholder:'Enter prompt'},
-        {id:uid(),type:'file',name:'file'}
+        {id:uid(),type:'text',name:'prompt',placeholder:'Enter prompt',label:'Prompt'},
+        {id:uid(),type:'file',name:'file',label:'Arquivo'}
       ]
     }: undefined,
     subtitle: ''
   };
 
   const cfg = saved ? Object.assign(defaults, saved) : defaults;
+  if(cfg.kind==='custom' && Array.isArray(cfg.customSpec?.fields)){
+    cfg.customSpec.fields.forEach(f=>{
+      if(!f.id) f.id = uid();
+      if(!f.label && f.name){ const base=f.name.replace(/[_-]/g,' '); f.label = base.charAt(0).toUpperCase()+base.slice(1); }
+    });
+  }
+  if(id==='app-webhook') ensureWebhookDateFields(cfg);
   store.set(id, cfg);
 
   panel.innerHTML = headerTemplate(cfg) + bodyShell();
