@@ -51,7 +51,9 @@
     .canvas{position:relative;border:1px dashed var(--line);border-radius:16px;background:linear-gradient(180deg,#0c1226,#0a0f20);min-height:70vh;padding:14px;overflow:visible}
     .grid-bg{position:absolute;inset:0;background-image:linear-gradient(transparent 31px,var(--line) 32px), linear-gradient(90deg, transparent 31px,var(--line) 32px);background-size:32px 32px;opacity:.35;pointer-events:none}
 
-    .panel{position:absolute;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:visible}
+    .panel{position:absolute;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:visible;transition:border-color .3s ease, box-shadow .3s ease}
+    .panel.flash-panel{border-color:rgba(var(--accent-rgb), .65);box-shadow:0 0 0 4px rgba(var(--accent-rgb), .25), var(--shadow);animation:panelFlash 1.4s ease-out}
+    @keyframes panelFlash{0%{box-shadow:0 0 0 0 rgba(var(--accent-rgb), .0), var(--shadow);}55%{box-shadow:0 0 0 10px rgba(var(--accent-rgb), .35), var(--shadow);}100%{box-shadow:0 0 0 0 rgba(var(--accent-rgb), .0), var(--shadow);}}
     .panel .head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent)}
     .title{display:flex;align-items:center;gap:10px;font-weight:700}
     .title .icon{width:28px;height:28px;border-radius:8px;background:rgba(255,255,255,.07);display:grid;place-items:center}
@@ -153,7 +155,10 @@
         <h3 class="mb-0">Executive Metrics — Demo</h3>
         <div class="text-secondary small">All widgets configurable • Fetch from n8n webhooks</div>
       </div>
-      <div class="d-flex align-items-center gap-2"><span class="badge-main">Main refresh targets: Data & Charts</span></div>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="badge-main">Main refresh targets: Data & Charts</span>
+        <button class="btn btn-soft btn-sm" id="btn-resumo-locate"><i data-lucide="map-pin"></i> Localizar gráfico resumo</button>
+      </div>
     </div>
 
     <section class="canvas" id="canvas">
@@ -167,12 +172,12 @@
       <!-- CHART widgets -->
       <section class="panel" data-id="chart-revenue" data-kind="chart" data-main="1" style="left:736px; top:16px; width:560px; height:320px;"></section>
       <section class="panel" data-id="chart-traffic" data-kind="chart" data-main="1" style="left:16px; top:212px; width:700px; height:320px;"></section>
-      <section class="panel" data-id="chart-pie" data-kind="chart" data-main="0" style="left:16px; top:548px; width:360px; height:320px;"></section>
-      <section class="panel" data-id="chart-resumo" data-kind="chart" data-main="1" style="left:16px; top:1000px; width:700px; height:320px;"></section>
+      <section class="panel" data-id="chart-pie" data-kind="chart" data-main="0" style="left:16px; top:884px; width:360px; height:320px;"></section>
+      <section class="panel" data-id="chart-resumo" data-kind="chart" data-main="1" style="left:16px; top:548px; width:700px; height:320px;"></section>
 
       <!-- CUSTOM widgets (App style) -->
-      <section class="panel" data-id="app-blog" data-kind="custom" data-main="0" style="left:396px; top:548px; width:520px; height:300px;"></section>
-      <section class="panel" data-id="app-webhook" data-kind="custom" data-main="0" style="left:936px; top:548px; width:360px; height:420px;"></section>
+      <section class="panel" data-id="app-blog" data-kind="custom" data-main="0" style="left:396px; top:884px; width:520px; height:300px;"></section>
+      <section class="panel" data-id="app-webhook" data-kind="custom" data-main="0" style="left:936px; top:968px; width:360px; height:420px;"></section>
 
     </section>
 
@@ -188,6 +193,29 @@ const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const toastBox = $('#toasts');
 function toast(msg, type='info'){ const el=document.createElement('div'); el.className=`alert alert-${type==='info'?'secondary':(type==='success'?'success':(type==='danger'?'danger':'warning'))} shadow-sm mt-2`; el.innerHTML=msg; toastBox.appendChild(el); setTimeout(()=>el.remove(),4000); }
+const DEMO_RESUMO_TEXT = `
+🗓️ *Atualizado em:* 20/10/2025
+
+🏢 *Resumo por empresa:*
+- *Componentes*: R$ 0,00
+- *Eletrônica*: R$ 417.961,14
+
+📊 *Soma total do período:* R$ 417.961,14
+
+💰 *Resumo por data:*
+📅 20/10/2025: R$ 51.274,73
+📅 17/10/2025: R$ 55.660,00
+📅 16/10/2025: R$ 38.175,00
+📅 15/10/2025: R$ 74.615,00
+📅 14/10/2025: R$ 11.371,40
+📅 10/10/2025: R$ 2.110,00
+📅 09/10/2025: R$ 15.310,00
+📅 08/10/2025: R$ 97.490,00
+📅 07/10/2025: R$ 11.489,65
+📅 03/10/2025: R$ 18.680,00
+📅 02/10/2025: R$ 23.155,00
+📅 01/10/2025: R$ 18.630,36
+`;
 function getByPath(obj, path){ if(!path) return undefined; return path.split('.').reduce((a,k)=> (a && (k in a)) ? a[k] : undefined, obj); }
 function uid(){ return 'id'+Math.random().toString(36).slice(2,9); }
 function parsePtBrCurrency(str){ if(typeof str!=='string') return NaN; const cleaned=str.replace(/[^0-9,\.]/g,'').replace(/\./g,'').replace(',', '.'); const val=parseFloat(cleaned); return Number.isFinite(val)?val:NaN; }
@@ -474,16 +502,100 @@ function renderChartWidget(panel, cfg){
     </div>
   `;
   lucide.createIcons();
+  const canvasEl = $(`#${canvasId}`);
+  const ctx = canvasEl ? canvasEl.getContext('2d') : null;
+  const metaEl = $(`#${metaId}`);
   let chart=null;
+
+  function renderResumoChart(parsed, {isDemo=false}={}){
+    if(metaEl){ metaEl.classList.add('d-none'); metaEl.textContent=''; }
+    if(chart){ chart.destroy(); chart=null; }
+    if(!window.Chart || !ctx){
+      setStatus(panel, 'Chart.js não disponível');
+      return;
+    }
+    if(!parsed || !parsed.labels.length){
+      setStatus(panel, isDemo ? 'Prévia demo: sem dados' : 'Resumo não encontrado');
+      return;
+    }
+    const accentRgb = (getComputedStyle(document.body).getPropertyValue('--accent-rgb')||'14,165,233').trim()||'14,165,233';
+    const datasetLabel = cfg.chartSpec?.datasetLabel || 'Total por data';
+    const currencyFmt = new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
+    chart = new Chart(ctx,{
+      type:'bar',
+      data:{
+        labels: parsed.labels,
+        datasets:[{
+          label: datasetLabel,
+          data: parsed.values,
+          backgroundColor: `rgba(${accentRgb},0.35)`,
+          borderColor: `rgba(${accentRgb},0.85)`,
+          borderWidth:1.5,
+          borderRadius:6
+        }]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        scales:{
+          x:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'}},
+          y:{
+            ticks:{
+              color:'#e6edf6',
+              callback:(value)=> currencyFmt.format(Number(value)||0)
+            },
+            grid:{color:'rgba(255,255,255,.08)'},
+            beginAtZero:true
+          }
+        },
+        plugins:{
+          legend:{labels:{color:'#e6edf6'}},
+          tooltip:{
+            callbacks:{
+              label:(ctx)=>{
+                const val = ctx.parsed?.y ?? ctx.parsed ?? 0;
+                return `${ctx.dataset.label||''}: ${currencyFmt.format(val)}`.trim();
+              }
+            }
+          }
+        }
+      }
+    });
+    const statusBits=[];
+    if(isDemo) statusBits.push('Prévia demo');
+    if(parsed.updatedAt) statusBits.push(`Atualizado ${parsed.updatedAt}`);
+    if(parsed.total!=null) statusBits.push(`Total ${currencyFmt.format(parsed.total)}`);
+    statusBits.push(`${parsed.labels.length} datas`);
+    const topCompany = parsed.companies.slice().sort((a,b)=> b.value-a.value)[0];
+    if(topCompany && topCompany.value>0) statusBits.push(`Maior empresa: ${topCompany.label}`);
+    setStatus(panel, statusBits.join(' • '));
+    if(metaEl){
+      const parts=[];
+      if(parsed.total!=null){
+        parts.push(`Total do período: <span class="text-white">${esc(currencyFmt.format(parsed.total))}</span>`);
+      }
+      if(parsed.companies.length){
+        const companiesHtml = parsed.companies.map(c=>
+          `<span class="me-3">${esc(c.label)}: <span class="text-white">${esc(currencyFmt.format(c.value))}</span></span>`
+        ).join('');
+        parts.push(`Empresas: ${companiesHtml}`);
+      }
+      if(isDemo){
+        parts.push('<span class="text-secondary">Dados demonstrativos</span>');
+      }
+      if(parts.length){
+        metaEl.innerHTML = parts.join(' • ');
+        metaEl.classList.remove('d-none');
+      }
+    }
+  }
 
   async function run(){
     await fetchAndApply(panel, cfg, (data)=>{
-      if(!window.Chart) return;
-      const ctx = $(`#${canvasId}`).getContext('2d');
-      const metaEl = $(`#${metaId}`);
-      if(chart){ chart.destroy(); }
+      if(!window.Chart || !ctx) return;
       const style = (cfg.chartSpec?.style||'line');
       if(metaEl){ metaEl.classList.add('d-none'); metaEl.textContent=''; }
+      if(chart){ chart.destroy(); chart=null; }
       if(style==='line'){
         const labels = getByPath(data, cfg.chartSpec.labelsPath||'xLabels') || Array.from({length:30},(_,i)=>i+1);
         const dsData = getByPath(data, cfg.chartSpec.dataPath||'series[0].data') || Array.from({length:30},()=>Math.round(7000+Math.random()*2000));
@@ -503,76 +615,7 @@ function renderChartWidget(panel, cfg){
           }
         }
         const parsed = parseResumoSummary(resumoText);
-        if(parsed.labels.length){
-          const accentRgb = (getComputedStyle(document.body).getPropertyValue('--accent-rgb')||'14,165,233').trim()||'14,165,233';
-          const datasetLabel = cfg.chartSpec?.datasetLabel || 'Total por data';
-          const currencyFmt = new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
-          chart = new Chart(ctx,{
-            type:'bar',
-            data:{
-              labels: parsed.labels,
-              datasets:[{
-                label: datasetLabel,
-                data: parsed.values,
-                backgroundColor: `rgba(${accentRgb},0.35)`,
-                borderColor: `rgba(${accentRgb},0.85)`,
-                borderWidth:1.5,
-                borderRadius:6
-              }]
-            },
-            options:{
-              responsive:true,
-              maintainAspectRatio:false,
-              scales:{
-                x:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'}},
-                y:{
-                  ticks:{
-                    color:'#e6edf6',
-                    callback:(value)=> currencyFmt.format(Number(value)||0)
-                  },
-                  grid:{color:'rgba(255,255,255,.08)'},
-                  beginAtZero:true
-                }
-              },
-              plugins:{
-                legend:{labels:{color:'#e6edf6'}},
-                tooltip:{
-                  callbacks:{
-                    label:(ctx)=>{
-                      const val = ctx.parsed?.y ?? ctx.parsed ?? 0;
-                      return `${ctx.dataset.label||''}: ${currencyFmt.format(val)}`.trim();
-                    }
-                  }
-                }
-              }
-            }
-          });
-          const statusBits=[];
-          if(parsed.updatedAt) statusBits.push(`Atualizado ${parsed.updatedAt}`);
-          if(parsed.total!=null) statusBits.push(`Total ${currencyFmt.format(parsed.total)}`);
-          statusBits.push(`${parsed.labels.length} datas`);
-          const topCompany = parsed.companies.slice().sort((a,b)=> b.value-a.value)[0];
-          if(topCompany && topCompany.value>0) statusBits.push(`Maior empresa: ${topCompany.label}`);
-          setStatus(panel, statusBits.join(' • '));
-          if(metaEl){
-            const parts=[];
-            if(parsed.total!=null){
-              parts.push(`Total do período: <span class="text-white">${currencyFmt.format(parsed.total)}</span>`);
-            }
-            if(parsed.companies.length){
-              const companiesHtml = parsed.companies.map(c=>
-                `<span class="me-3">${esc(c.label)}: <span class="text-white">${currencyFmt.format(c.value)}</span></span>`
-              ).join('');
-              parts.push(`Empresas: ${companiesHtml}`);
-            }
-            if(parts.length){
-              metaEl.innerHTML = parts.join(' • ');
-              metaEl.classList.remove('d-none');
-            }
-          }
-        }else{
-          setStatus(panel, 'Resumo não encontrado');
-        }
+        renderResumoChart(parsed);
       }else if(style==='bar'){
         const labels = getByPath(data, cfg.chartSpec.labelsPath||'labels') || ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
         const dsData = getByPath(data, cfg.chartSpec.dataPath||'data') || [530,610,580,740,890,660,720];
@@ -587,6 +630,16 @@ function renderChartWidget(panel, cfg){
         setStatus(panel, `Pie: ${labels.length} slices`);
       }
     });
+  }
+
+  if((cfg.chartSpec?.style||'line')==='resumo'){
+    const demoText = cfg.chartSpec?.demoResumoText || DEMO_RESUMO_TEXT;
+    const parsedDemo = parseResumoSummary(demoText);
+    if(parsedDemo.labels.length){
+      renderResumoChart(parsedDemo, {isDemo:true});
+    }else{
+      setStatus(panel, 'Prévia demo indisponível — clique em Refresh.');
+    }
   }
   $('.btn-refresh', panel).addEventListener('click', (e)=>{ e.preventDefault(); run(); });
 
@@ -916,6 +969,9 @@ function attachConfig(panel, cfg, kind){
             if(!cfg.chartSpec.datasetLabel || ['Series','Revenue','Visits'].includes(cfg.chartSpec.datasetLabel)){
               cfg.chartSpec.datasetLabel = 'Total por data';
             }
+            if(!cfg.chartSpec.demoResumoText){
+              cfg.chartSpec.demoResumoText = DEMO_RESUMO_TEXT;
+            }
           }
           openOverlay(`Configure: ${cfg.title}`, chartConfigForm(cfg)); bindOverlayEvents(); return;
         }
@@ -1007,7 +1063,8 @@ function initPanel(panel){
       dataPath: (id==='chart-revenue')?'series[0].data':(id==='chart-traffic')?'data':'values',
       datasetLabel: (id==='chart-revenue')?'Revenue':(id==='chart-traffic')?'Visits':(id==='chart-resumo')?'Total por data':'',
       yMaxPath:'yMax',
-      resumoPath:'0.resumo'
+      resumoPath:'0.resumo',
+      demoResumoText: (id==='chart-resumo')?DEMO_RESUMO_TEXT:undefined
     } : undefined,
     customSpec: kind==='custom'? {
       responseOnly: false,
@@ -1033,6 +1090,19 @@ function initPanel(panel){
   if(kind==='custom') renderCustomWidget(panel, cfg);
 }
 panels().forEach(initPanel);
+
+const resumoLocateBtn = $('#btn-resumo-locate');
+if(resumoLocateBtn){
+  resumoLocateBtn.addEventListener('click', ()=>{
+    const alvo = $('.panel[data-id="chart-resumo"]');
+    if(!alvo) return;
+    alvo.scrollIntoView({behavior:'smooth', block:'center'});
+    alvo.classList.remove('flash-panel');
+    void alvo.offsetWidth;
+    alvo.classList.add('flash-panel');
+    setTimeout(()=> alvo.classList.remove('flash-panel'), 1600);
+  });
+}
 
 /* Global "Run Selected" */
 $('#btn-main').addEventListener('click', ()=>{
