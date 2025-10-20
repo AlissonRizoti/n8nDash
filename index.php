@@ -56,6 +56,9 @@
     .title{display:flex;align-items:center;gap:10px;font-weight:700}
     .title .icon{width:28px;height:28px;border-radius:8px;background:rgba(255,255,255,.07);display:grid;place-items:center}
     .panel .body{padding:12px;}
+    .chart-shell{display:flex;flex-direction:column;height:100%;}
+    .chart-area{flex:1;min-height:180px;}
+    .chart-area canvas{width:100%!important;height:100%!important;}
     .divider{height:1px;background:var(--line);margin:10px 0}
     .badge-main{border:1px solid rgba(255,255,255,.15);padding:2px 8px;border-radius:999px;font-size:12px;background:rgba(14,165,233,.15);color:#7dd3fc}
     .toast-float{position:fixed;right:18px;bottom:18px;z-index:9999}
@@ -165,6 +168,7 @@
       <section class="panel" data-id="chart-revenue" data-kind="chart" data-main="1" style="left:736px; top:16px; width:560px; height:320px;"></section>
       <section class="panel" data-id="chart-traffic" data-kind="chart" data-main="1" style="left:16px; top:212px; width:700px; height:320px;"></section>
       <section class="panel" data-id="chart-pie" data-kind="chart" data-main="0" style="left:16px; top:548px; width:360px; height:320px;"></section>
+      <section class="panel" data-id="chart-resumo" data-kind="chart" data-main="1" style="left:16px; top:1000px; width:700px; height:320px;"></section>
 
       <!-- CUSTOM widgets (App style) -->
       <section class="panel" data-id="app-blog" data-kind="custom" data-main="0" style="left:396px; top:548px; width:520px; height:300px;"></section>
@@ -186,6 +190,22 @@ const toastBox = $('#toasts');
 function toast(msg, type='info'){ const el=document.createElement('div'); el.className=`alert alert-${type==='info'?'secondary':(type==='success'?'success':(type==='danger'?'danger':'warning'))} shadow-sm mt-2`; el.innerHTML=msg; toastBox.appendChild(el); setTimeout(()=>el.remove(),4000); }
 function getByPath(obj, path){ if(!path) return undefined; return path.split('.').reduce((a,k)=> (a && (k in a)) ? a[k] : undefined, obj); }
 function uid(){ return 'id'+Math.random().toString(36).slice(2,9); }
+function parsePtBrCurrency(str){ if(typeof str!=='string') return NaN; const cleaned=str.replace(/[^0-9,\.]/g,'').replace(/\./g,'').replace(',', '.'); const val=parseFloat(cleaned); return Number.isFinite(val)?val:NaN; }
+function parseResumoSummary(input){
+  const result={labels:[], values:[], total:null, updatedAt:null, companies:[]};
+  if(typeof input!=='string') return result;
+  const text=input.replace(/\r/g,'');
+  const updated=text.match(/Atualizado em:\*?\s*(\d{2}\/\d{2}\/\d{4})/i);
+  if(updated) result.updatedAt=updated[1];
+  const total=text.match(/Soma total do período:\*?\s*R\$\s*([\d\.,]+)/i);
+  if(total){ const totalVal=parsePtBrCurrency(total[1]); if(!Number.isNaN(totalVal)) result.total=totalVal; }
+  const companyRegex=/-\s*\*([^*]+)\*:\s*R\$\s*([\d\.,]+)/g;
+  let match;
+  while((match=companyRegex.exec(text))){ const val=parsePtBrCurrency(match[2]); if(!Number.isNaN(val)) result.companies.push({label:match[1].trim(), value:val}); }
+  const dateRegex=/📅\s*(\d{2}\/\d{2}\/\d{4})\s*:\s*R\$\s*([\d\.,]+)/g;
+  while((match=dateRegex.exec(text))){ const val=parsePtBrCurrency(match[2]); if(!Number.isNaN(val)){ result.labels.push(match[1]); result.values.push(val); } }
+  return result;
+}
 
 /* ========== Theme ========== */
 lucide.createIcons();
@@ -446,7 +466,13 @@ function renderDataWidget(panel, cfg){
 function renderChartWidget(panel, cfg){
   const content = panel.querySelector('.content');
   const canvasId = `c-${cfg.id}`;
-  content.innerHTML = `<div style="height:calc(100% - 0px); min-height:180px;"><canvas id="${canvasId}"></canvas></div>`;
+  const metaId = `meta-${cfg.id}`;
+  content.innerHTML = `
+    <div class="chart-shell">
+      <div class="chart-area"><canvas id="${canvasId}"></canvas></div>
+      <div class="chart-meta small text-secondary mt-2 d-none" id="${metaId}"></div>
+    </div>
+  `;
   lucide.createIcons();
   let chart=null;
 
@@ -454,8 +480,10 @@ function renderChartWidget(panel, cfg){
     await fetchAndApply(panel, cfg, (data)=>{
       if(!window.Chart) return;
       const ctx = $(`#${canvasId}`).getContext('2d');
+      const metaEl = $(`#${metaId}`);
       if(chart){ chart.destroy(); }
       const style = (cfg.chartSpec?.style||'line');
+      if(metaEl){ metaEl.classList.add('d-none'); metaEl.textContent=''; }
       if(style==='line'){
         const labels = getByPath(data, cfg.chartSpec.labelsPath||'xLabels') || Array.from({length:30},(_,i)=>i+1);
         const dsData = getByPath(data, cfg.chartSpec.dataPath||'series[0].data') || Array.from({length:30},()=>Math.round(7000+Math.random()*2000));
@@ -463,6 +491,88 @@ function renderChartWidget(panel, cfg){
         chart = new Chart(ctx,{type:'line',data:{labels,datasets:[{label:labelName,data:dsData,tension:.35,fill:false,borderWidth:2}]},
           options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'}},y:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'},suggestedMax: getByPath(data, cfg.chartSpec.yMaxPath||'yMax')||undefined}}}});
         setStatus(panel, `Line: ${labels.length} points`);
+      }else if(style==='resumo'){
+        const resumoPath = cfg.chartSpec?.resumoPath || '0.resumo';
+        let resumoText = resumoPath ? getByPath(data, resumoPath) : null;
+        if(typeof resumoText !== 'string'){
+          if(Array.isArray(data)){
+            const firstWithResumo = data.find(item=> item && typeof item.resumo==='string');
+            resumoText = firstWithResumo ? firstWithResumo.resumo : resumoText;
+          }else if(data && typeof data.resumo==='string'){
+            resumoText = data.resumo;
+          }
+        }
+        const parsed = parseResumoSummary(resumoText);
+        if(parsed.labels.length){
+          const accentRgb = (getComputedStyle(document.body).getPropertyValue('--accent-rgb')||'14,165,233').trim()||'14,165,233';
+          const datasetLabel = cfg.chartSpec?.datasetLabel || 'Total por data';
+          const currencyFmt = new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'});
+          chart = new Chart(ctx,{
+            type:'bar',
+            data:{
+              labels: parsed.labels,
+              datasets:[{
+                label: datasetLabel,
+                data: parsed.values,
+                backgroundColor: `rgba(${accentRgb},0.35)`,
+                borderColor: `rgba(${accentRgb},0.85)`,
+                borderWidth:1.5,
+                borderRadius:6
+              }]
+            },
+            options:{
+              responsive:true,
+              maintainAspectRatio:false,
+              scales:{
+                x:{ticks:{color:'#e6edf6'},grid:{color:'rgba(255,255,255,.08)'}},
+                y:{
+                  ticks:{
+                    color:'#e6edf6',
+                    callback:(value)=> currencyFmt.format(Number(value)||0)
+                  },
+                  grid:{color:'rgba(255,255,255,.08)'},
+                  beginAtZero:true
+                }
+              },
+              plugins:{
+                legend:{labels:{color:'#e6edf6'}},
+                tooltip:{
+                  callbacks:{
+                    label:(ctx)=>{
+                      const val = ctx.parsed?.y ?? ctx.parsed ?? 0;
+                      return `${ctx.dataset.label||''}: ${currencyFmt.format(val)}`.trim();
+                    }
+                  }
+                }
+              }
+            }
+          });
+          const statusBits=[];
+          if(parsed.updatedAt) statusBits.push(`Atualizado ${parsed.updatedAt}`);
+          if(parsed.total!=null) statusBits.push(`Total ${currencyFmt.format(parsed.total)}`);
+          statusBits.push(`${parsed.labels.length} datas`);
+          const topCompany = parsed.companies.slice().sort((a,b)=> b.value-a.value)[0];
+          if(topCompany && topCompany.value>0) statusBits.push(`Maior empresa: ${topCompany.label}`);
+          setStatus(panel, statusBits.join(' • '));
+          if(metaEl){
+            const parts=[];
+            if(parsed.total!=null){
+              parts.push(`Total do período: <span class="text-white">${currencyFmt.format(parsed.total)}</span>`);
+            }
+            if(parsed.companies.length){
+              const companiesHtml = parsed.companies.map(c=>
+                `<span class="me-3">${esc(c.label)}: <span class="text-white">${currencyFmt.format(c.value)}</span></span>`
+              ).join('');
+              parts.push(`Empresas: ${companiesHtml}`);
+            }
+            if(parts.length){
+              metaEl.innerHTML = parts.join(' • ');
+              metaEl.classList.remove('d-none');
+            }
+          }
+        }else{
+          setStatus(panel, 'Resumo não encontrado');
+        }
       }else if(style==='bar'){
         const labels = getByPath(data, cfg.chartSpec.labelsPath||'labels') || ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
         const dsData = getByPath(data, cfg.chartSpec.dataPath||'data') || [530,610,580,740,890,660,720];
@@ -636,6 +746,8 @@ Link list:
 }
 function chartConfigForm(cfg){
   const cs=cfg.chartSpec;
+  const isPie = cs.style==='pie';
+  const isResumo = cs.style==='resumo';
   return `
     <form class="wcfg" autocomplete="off">
       ${identityFields(cfg)}
@@ -648,15 +760,20 @@ function chartConfigForm(cfg){
             <option value="line" ${cs.style==='line'?'selected':''}>Line (Revenue 30d)</option>
             <option value="bar" ${cs.style==='bar'?'selected':''}>Bar (Traffic 7d)</option>
             <option value="pie" ${cs.style==='pie'?'selected':''}>Pie</option>
+            <option value="resumo" ${cs.style==='resumo'?'selected':''}>Resumo texto (pt-BR)</option>
           </select>
         </div>
         <div class="col-md-3"><label class="form-label small">Run Label</label><input class="form-control form-control-sm" data-cfg="runLabel" value="${esc(cfg.runLabel||'Refresh')}"/></div>
       </div>
-      <div class="row g-2 mt-1">
+      <div class="row g-2 mt-1 ${isResumo?'d-none':''}" data-map="standard">
         <div class="col-md-4"><label class="form-label small">labels path</label><input class="form-control form-control-sm" data-cfg="labelsPath" value="${esc(cs.labelsPath|| (cs.style==='bar'?'labels':'xLabels'))}" /></div>
-        <div class="col-md-4"><label class="form-label small">${cs.style==='pie'?'values':'data'} path</label><input class="form-control form-control-sm" data-cfg="dataPath" value="${esc(cs.dataPath|| (cs.style==='pie'?'values':'series[0].data'))}" /></div>
-        <div class="col-md-4 ${cs.style==='pie'?'d-none':''}"><label class="form-label small">dataset label</label><input class="form-control form-control-sm" data-cfg="datasetLabel" value="${esc(cs.datasetLabel||'Series')}" /></div>
+        <div class="col-md-4"><label class="form-label small">${isPie?'values':'data'} path</label><input class="form-control form-control-sm" data-cfg="dataPath" value="${esc(cs.dataPath|| (isPie?'values':'series[0].data'))}" /></div>
+        <div class="col-md-4 ${isPie?'d-none':''}"><label class="form-label small">dataset label</label><input class="form-control form-control-sm" data-cfg="datasetLabel" value="${esc(cs.datasetLabel||'Series')}" /></div>
         <div class="col-md-4"><label class="form-label small">yMax path (optional)</label><input class="form-control form-control-sm" data-cfg="yMaxPath" value="${esc(cs.yMaxPath||'yMax')}" /></div>
+      </div>
+      <div class="row g-2 mt-1 ${isResumo?'':'d-none'}" data-map="resumo">
+        <div class="col-md-6"><label class="form-label small">Resumo text path</label><input class="form-control form-control-sm" data-cfg="resumoPath" value="${esc(cs.resumoPath||'0.resumo')}" /></div>
+        <div class="col-md-4"><label class="form-label small">Dataset label</label><input class="form-control form-control-sm" data-cfg="datasetLabel" value="${esc(cs.datasetLabel||'Total por data')}" /></div>
       </div>
 
       <div class="divider"></div>
@@ -684,6 +801,13 @@ Pie:
   "labels": ["Organic","Paid","Referral"],
   "values": [42,35,23]
 }
+
+Resumo texto (pt-BR):
+[
+  {
+    "resumo": "\n🗓️ *Atualizado em:* 20/10/2025\n...\n📅 20/10/2025: R$ 51.274,73\n📅 17/10/2025: R$ 55.660,00\n"
+  }
+]
           </pre>
         </details>
       </div>
@@ -785,12 +909,22 @@ function attachConfig(panel, cfg, kind){
         if(t.matches('[data-cfg="itemUrlPath"]')) cfg.dataSpec.itemUrlPath=t.value;
       }
       if(kind==='chart'){
-        if(t.matches('[data-cfg="chartStyle"]')){ cfg.chartSpec.style=t.value; openOverlay(`Configure: ${cfg.title}`, chartConfigForm(cfg)); bindOverlayEvents(); return; }
+        if(t.matches('[data-cfg="chartStyle"]')){
+          cfg.chartSpec.style=t.value;
+          if(t.value==='resumo'){
+            cfg.chartSpec.resumoPath = cfg.chartSpec.resumoPath || '0.resumo';
+            if(!cfg.chartSpec.datasetLabel || ['Series','Revenue','Visits'].includes(cfg.chartSpec.datasetLabel)){
+              cfg.chartSpec.datasetLabel = 'Total por data';
+            }
+          }
+          openOverlay(`Configure: ${cfg.title}`, chartConfigForm(cfg)); bindOverlayEvents(); return;
+        }
         if(t.matches('[data-cfg="runLabel"]')) cfg.runLabel=t.value;
         if(t.matches('[data-cfg="labelsPath"]')) cfg.chartSpec.labelsPath=t.value;
         if(t.matches('[data-cfg="dataPath"]')) cfg.chartSpec.dataPath=t.value;
         if(t.matches('[data-cfg="datasetLabel"]')) cfg.chartSpec.datasetLabel=t.value;
         if(t.matches('[data-cfg="yMaxPath"]')) cfg.chartSpec.yMaxPath=t.value;
+        if(t.matches('[data-cfg="resumoPath"]')) cfg.chartSpec.resumoPath=t.value;
       }
       if(kind==='custom'){
         if(t.matches('[data-cfg="runLabel"]')) cfg.runLabel=t.value;
@@ -853,6 +987,7 @@ function initPanel(panel){
       if(id==='chart-revenue') return 'Revenue (30 days)';
       if(id==='chart-traffic') return 'Traffic (7 days)';
       if(id==='chart-pie') return 'Market Share';
+      if(id==='chart-resumo') return 'Resumo por Data';
       if(id==='app-blog') return 'Blog Generator';
       if(id==='app-webhook') return 'Webhook App';
       return 'Widget';
@@ -867,11 +1002,12 @@ function initPanel(panel){
       demoV1: (id==='kpi-revenue')?'$82,440':(id==='kpi-subs')?'12,873':'—', demoV2:(id==='kpi-revenue')?'+4.3%':(id==='kpi-subs')?'+142':''
     } : undefined,
     chartSpec: kind==='chart'? {
-      style: (id==='chart-revenue')?'line':(id==='chart-traffic')?'bar':'pie',
+      style: (id==='chart-revenue')?'line':(id==='chart-traffic')?'bar':(id==='chart-resumo')?'resumo':'pie',
       labelsPath: (id==='chart-revenue')?'xLabels':'labels',
       dataPath: (id==='chart-revenue')?'series[0].data':(id==='chart-traffic')?'data':'values',
-      datasetLabel: (id==='chart-revenue')?'Revenue':(id==='chart-traffic')?'Visits':'',
-      yMaxPath:'yMax'
+      datasetLabel: (id==='chart-revenue')?'Revenue':(id==='chart-traffic')?'Visits':(id==='chart-resumo')?'Total por data':'',
+      yMaxPath:'yMax',
+      resumoPath:'0.resumo'
     } : undefined,
     customSpec: kind==='custom'? {
       responseOnly: false,
