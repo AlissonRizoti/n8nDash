@@ -221,6 +221,25 @@ function uid(){ return 'id'+Math.random().toString(36).slice(2,9); }
 function parsePtBrCurrency(str){ if(typeof str!=='string') return NaN; const cleaned=str.replace(/[^0-9,\.]/g,'').replace(/\./g,'').replace(',', '.'); const val=parseFloat(cleaned); return Number.isFinite(val)?val:NaN; }
 function formatDateInput(date){ const y=date.getFullYear(); const m=String(date.getMonth()+1).padStart(2,'0'); const d=String(date.getDate()).padStart(2,'0'); return `${y}-${m}-${d}`; }
 function currentMonthRange(){ const now=new Date(); const start=new Date(now.getFullYear(), now.getMonth(), 1); const end=new Date(now.getFullYear(), now.getMonth()+1, 0); return {start:formatDateInput(start), end:formatDateInput(end)}; }
+function isoToBrDate(str){ if(typeof str!=='string') return str; const m=str.match(/^(\d{4})-(\d{2})-(\d{2})$/); return m?`${m[3]}/${m[2]}/${m[1]}`:str; }
+function ensureBrDateValue(value, fallbackIso){
+  if(typeof value==='string'){
+    if(/^(\d{2})\/(\d{2})\/(\d{4})$/.test(value)) return value;
+    if(/^(\d{4})-(\d{2})-(\d{2})$/.test(value)) return isoToBrDate(value);
+  }
+  if(typeof fallbackIso==='string'){
+    if(/^(\d{2})\/(\d{2})\/(\d{4})$/.test(fallbackIso)) return fallbackIso;
+    if(/^(\d{4})-(\d{2})-(\d{2})$/.test(fallbackIso)) return isoToBrDate(fallbackIso);
+  }
+  if(fallbackIso!=null) return String(fallbackIso);
+  return value!=null?String(value):'';
+}
+function setAutoDateValue(input, value){
+  if(!input) return;
+  const formatted = ensureBrDateValue(value);
+  if(input.dataset.format==='dd/mm/yyyy'){ input.value = formatted || ''; }
+  else{ input.value = value!=null?String(value):''; }
+}
 function formDataToObject(fd){ const obj={}; if(!fd) return obj; for(const [k,v] of fd.entries()){ const value=(v instanceof File)?{name:v.name,size:v.size,type:v.type,lastModified:v.lastModified}:v; if(obj[k]!==undefined){ if(Array.isArray(obj[k])) obj[k].push(value); else obj[k]=[obj[k], value]; }else{ obj[k]=value; } } return obj; }
 function parseResumoSummary(input){
   const result={labels:[], values:[], total:null, updatedAt:null, companies:[]};
@@ -720,9 +739,11 @@ function ensureWebhookDateFields(cfg){
     startField.label = startField.label || 'Data início';
     startField.auto = 'month-start';
     startField.width = startField.width || 'col-md-6';
-    startField.value = monthRange.start;
+    startField.format = 'dd/mm/yyyy';
+    startField.placeholder = startField.placeholder || 'dd/mm/aaaa';
+    startField.value = ensureBrDateValue(startField.value, monthRange.start);
   }else{
-    startField = {id:uid(), type:'date', name:'data_inicio', label:'Data início', auto:'month-start', width:'col-md-6', value:monthRange.start};
+    startField = {id:uid(), type:'date', name:'data_inicio', label:'Data início', auto:'month-start', width:'col-md-6', value:ensureBrDateValue(null, monthRange.start), format:'dd/mm/yyyy', placeholder:'dd/mm/aaaa'};
   }
   let endField = fields.find(f=>f && f.name==='data_final');
   if(endField){
@@ -731,9 +752,11 @@ function ensureWebhookDateFields(cfg){
     endField.label = endField.label || 'Data final';
     endField.auto = 'month-end';
     endField.width = endField.width || 'col-md-6';
-    endField.value = monthRange.end;
+    endField.format = 'dd/mm/yyyy';
+    endField.placeholder = endField.placeholder || 'dd/mm/aaaa';
+    endField.value = ensureBrDateValue(endField.value, monthRange.end);
   }else{
-    endField = {id:uid(), type:'date', name:'data_final', label:'Data final', auto:'month-end', width:'col-md-6', value:monthRange.end};
+    endField = {id:uid(), type:'date', name:'data_final', label:'Data final', auto:'month-end', width:'col-md-6', value:ensureBrDateValue(null, monthRange.end), format:'dd/mm/yyyy', placeholder:'dd/mm/aaaa'};
   }
   const others = fields.filter(f=> f && f.name!=='data_inicio' && f.name!=='data_final');
   cfg.customSpec.fields = [startField, endField, ...others];
@@ -756,8 +779,8 @@ function renderCustomWidget(panel, cfg){
   `;
   lucide.createIcons();
   const range = currentMonthRange();
-  $$('input[data-auto="month-start"]', panel).forEach(inp=>{ inp.value = range.start; });
-  $$('input[data-auto="month-end"]', panel).forEach(inp=>{ inp.value = range.end; });
+  $$('input[data-auto="month-start"]', panel).forEach(inp=>{ setAutoDateValue(inp, range.start); });
+  $$('input[data-auto="month-end"]', panel).forEach(inp=>{ setAutoDateValue(inp, range.end); });
 
   $(`#frm-${cfg.id}`, panel).addEventListener('submit', async (e)=>{
     e.preventDefault();
@@ -791,31 +814,42 @@ function inputHtml(f){
   const id=esc(f.id||uid());
   const nm=esc(f.name||'field');
   const labelHtml = f.label ? `<label class="form-label small" for="${id}">${esc(f.label)}</label>` : '';
-  const ph=f.placeholder?` placeholder="${esc(f.placeholder)}"`:'';
+  let placeholder = f.placeholder || '';
+  if(!placeholder && f.type==='date' && f.format==='dd/mm/yyyy') placeholder='dd/mm/aaaa';
+  const ph=placeholder?` placeholder="${esc(placeholder)}"`:'';
   const autoAttr=f.auto?` data-auto="${esc(f.auto)}"`:'';
-  const valueAttr=(f.value!=null && f.type!=='file' && f.type!=='textarea' && f.type!=='checkbox')?` value="${esc(f.value)}"`:'';
+  const formatAttr=f.format?` data-format="${esc(f.format)}"`:'';
+  let valueAttr='';
+  if(f.value!=null && f.type!=='file' && f.type!=='textarea' && f.type!=='checkbox'){
+    let v=String(f.value);
+    if(f.type==='date' && f.format==='dd/mm/yyyy') v=ensureBrDateValue(v);
+    valueAttr=` value="${esc(v)}"`;
+  }
   const widthClass = esc(f.width || ((f.type==='textarea'||f.type==='file')?'col-12':(f.type==='checkbox')?'col-12 form-check ms-2':(f.type==='number'||f.type==='date'||f.type==='select')?'col-md-4':'col-md-6'));
   if(f.type==='select'){
-    return `<div class="${widthClass}">${labelHtml}<select id="${id}" name="${nm}" class="form-select"${autoAttr}>${(f.options||[]).map(o=>`<option>${esc(o)}</option>`).join('')}</select></div>`;
+    return `<div class="${widthClass}">${labelHtml}<select id="${id}" name="${nm}" class="form-select"${autoAttr}${formatAttr}>${(f.options||[]).map(o=>`<option>${esc(o)}</option>`).join('')}</select></div>`;
   }
   if(f.type==='textarea'){
-    return `<div class="${widthClass}">${labelHtml}<textarea id="${id}" name="${nm}" rows="4" class="form-control"${ph}${autoAttr}>${f.value!=null?esc(f.value):''}</textarea></div>`;
+    return `<div class="${widthClass}">${labelHtml}<textarea id="${id}" name="${nm}" rows="4" class="form-control"${ph}${autoAttr}${formatAttr}>${f.value!=null?esc(f.value):''}</textarea></div>`;
   }
   if(f.type==='file'){
-    return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="file" class="form-control"${autoAttr} /></div>`;
+    return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="file" class="form-control"${autoAttr}${formatAttr} /></div>`;
   }
   if(f.type==='checkbox'){
     const checked = f.value ? ' checked' : '';
     const lbl = f.label || nm;
-    return `<div class="${widthClass}"><input id="${id}" name="${nm}" class="form-check-input" type="checkbox"${autoAttr}${checked}> <label class="form-check-label" for="${id}">${esc(lbl)}</label></div>`;
+    return `<div class="${widthClass}"><input id="${id}" name="${nm}" class="form-check-input" type="checkbox"${autoAttr}${formatAttr}${checked}> <label class="form-check-label" for="${id}">${esc(lbl)}</label></div>`;
   }
   if(f.type==='number'){
-    return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="number" class="form-control"${ph}${valueAttr}${autoAttr}/></div>`;
+    return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="number" class="form-control"${ph}${valueAttr}${autoAttr}${formatAttr}/></div>`;
   }
   if(f.type==='date'){
-    return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="date" class="form-control"${valueAttr}${autoAttr}/></div>`;
+    if(f.format==='dd/mm/yyyy'){
+      return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="text" class="form-control" inputmode="numeric" pattern="\d{2}/\d{2}/\d{4}"${ph}${valueAttr}${autoAttr}${formatAttr}/></div>`;
+    }
+    return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="date" class="form-control"${ph}${valueAttr}${autoAttr}${formatAttr}/></div>`;
   }
-  return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" class="form-control"${ph}${valueAttr}${autoAttr}/></div>`;
+  return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" class="form-control"${ph}${valueAttr}${autoAttr}${formatAttr}/></div>`;
 }
 
 /* ========== Config forms ========== */
@@ -1214,8 +1248,8 @@ function initPanel(panel){
         {id:uid(),type:'text',name:'topic',placeholder:'Topic (e.g., AI for SMBs)',label:'Topic'},
         {id:uid(),type:'select',name:'tone',options:['Professional','Friendly','Playful'],label:'Tone'}
       ]:(id==='app-webhook')?[
-        {id:uid(),type:'date',name:'data_inicio',label:'Data início',auto:'month-start',width:'col-md-6',value:monthRange.start},
-        {id:uid(),type:'date',name:'data_final',label:'Data final',auto:'month-end',width:'col-md-6',value:monthRange.end},
+        {id:uid(),type:'date',name:'data_inicio',label:'Data início',auto:'month-start',width:'col-md-6',value:ensureBrDateValue(null, monthRange.start),format:'dd/mm/yyyy',placeholder:'dd/mm/aaaa'},
+        {id:uid(),type:'date',name:'data_final',label:'Data final',auto:'month-end',width:'col-md-6',value:ensureBrDateValue(null, monthRange.end),format:'dd/mm/yyyy',placeholder:'dd/mm/aaaa'},
         {id:uid(),type:'file',name:'arquivo',label:'Arquivo'}
       ]:[
         {id:uid(),type:'text',name:'prompt',placeholder:'Enter prompt',label:'Prompt'},
