@@ -845,7 +845,7 @@ function inputHtml(f){
   }
   if(f.type==='date'){
     if(f.format==='dd/mm/yyyy'){
-      return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="text" class="form-control" inputmode="numeric" pattern="\d{2}/\d{2}/\d{4}"${ph}${valueAttr}${autoAttr}${formatAttr}/></div>`;
+      return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="text" class="form-control"${ph}${valueAttr}${autoAttr}${formatAttr}/></div>`;
     }
     return `<div class="${widthClass}">${labelHtml}<input id="${id}" name="${nm}" type="date" class="form-control"${ph}${valueAttr}${autoAttr}${formatAttr}/></div>`;
   }
